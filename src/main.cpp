@@ -14,17 +14,23 @@
  */
 
 #define PIN_IN_MOTOR PIN_IN_0
+#define PIN_IN_DEADMAN PIN_IN_1
 
 #define PIN_OUT_RESISTOR PIN_OUT_0
 #define PIN_OUT_CONTACTOR PIN_OUT_1
 #define PIN_OUT_STATUSLED PIN_OUT_2
 
 #define ANTISPARK_TIME_DELAY_MS 5000
-#define STATUSLED_BLINK_PERIOD 500
-#define STATUSLED_NOTSAFE_BLINK_PERIOD 150
+#define STATUSLED_BLINK_PERIOD 750
+#define STATUSLED_NOTSAFE_BLINK_PERIOD 350
+
+
+#define LED_BLINK_OK 500
+#define LED_BLINK_NOTSAFE 250
+
+uint64_t lls = 0;
 
 uint64_t lastLedSwitch = 0;
-int lastLedState = LOW;
 
 enum class CtrlState {
     NotSafeInit,
@@ -38,12 +44,16 @@ CtrlState ctrlState = CtrlState::NotSafeInit;
 
 
 void setup() {
-    pinMode(PIN_IN_MOTOR, INPUT);
-    pinMode(PIN_IN_BUTTON, INPUT);
-
     digitalWrite(PIN_OUT_RESISTOR, LOW);
     digitalWrite(PIN_OUT_CONTACTOR, LOW);
     digitalWrite(PIN_OUT_STATUSLED, LOW);
+
+    pinMode(PIN_IN_MOTOR, INPUT);
+    pinMode(PIN_IN_DEADMAN, INPUT);
+    pinMode(PIN_IN_BUTTON, INPUT);
+
+    // NOT USED
+    digitalWrite(PIN_OUT_3, LOW);
     digitalWrite(PIN_OUT_LED, LOW);
 
     pinMode(PIN_OUT_RESISTOR, OUTPUT);
@@ -58,12 +68,14 @@ uint64_t motorOnTime = 0;
 
 void loop() {
     // read inputs
-    bool motorSwitch = digitalRead(PIN_IN_MOTOR);
+    int8_t motorSwitch = digitalRead(PIN_IN_MOTOR);
+    int8_t deadmanSwitch = digitalRead(PIN_IN_DEADMAN);
+    digitalWrite(PIN_OUT_3, deadmanSwitch);
 
     // update state machine
     switch (ctrlState) {
         case CtrlState::NotSafeInit:
-            if(motorSwitch == LOW)
+            if(motorSwitch == LOW && deadmanSwitch == LOW)
                 ctrlState = CtrlState::MotorOff;
             break;
         case CtrlState::MotorOff:
@@ -83,6 +95,10 @@ void loop() {
             if(motorSwitch == LOW) {
                 ctrlState = CtrlState::MotorOff;
             }
+            break;
+    }
+    if(deadmanSwitch == HIGH) {
+        ctrlState = CtrlState::NotSafeInit;
     }
 
     // ------------------------------------------------------------------------
@@ -93,8 +109,7 @@ void loop() {
 
         if(ctrlState == CtrlState::NotSafeInit) {
             if(lastLedSwitch + STATUSLED_NOTSAFE_BLINK_PERIOD < millis()) {
-                lastLedState = lastLedState == HIGH ? LOW : HIGH;
-                digitalWrite(PIN_OUT_STATUSLED, lastLedState);
+                digitalWrite(PIN_OUT_STATUSLED, CHANGE);
                 lastLedSwitch = millis();
             }
         }else {
@@ -109,9 +124,21 @@ void loop() {
         digitalWrite(PIN_OUT_CONTACTOR, LOW);
 
         if(lastLedSwitch + STATUSLED_BLINK_PERIOD < millis()) {
-            lastLedState = lastLedState == HIGH ? LOW : HIGH;
-            digitalWrite(PIN_OUT_STATUSLED, lastLedState);
+            digitalWrite(PIN_OUT_STATUSLED, CHANGE);
             lastLedSwitch = millis();
+        }
+    }
+
+    uint64_t time = millis();
+    if(ctrlState == CtrlState::NotSafeInit) {
+        if(lls + LED_BLINK_NOTSAFE < time){
+            lls = time;
+            digitalWrite(PIN_OUT_LED, CHANGE);
+        }
+    }else {
+        if(lls + LED_BLINK_OK < time) {
+            lls = time;
+            digitalWrite(PIN_OUT_LED, CHANGE);
         }
     }
 }
