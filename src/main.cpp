@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include "tinycontroller.h"
-#include "blinky.h"
 
 /**
  * Safety controller for BatterBox switching
@@ -21,10 +20,8 @@
 #define PIN_OUT_STATUSLED PIN_OUT_2
 
 #define ANTISPARK_TIME_DELAY_MS 5000
-#define STATUSLED_BLINK_PERIOD 750
-#define STATUSLED_NOTSAFE_BLINK_PERIOD 350
 
-
+#define HEARTBEAT_TIME_MS 500
 #define LED_BLINK_TIME 250
 #define LED_STATE_UNSAFE_INIT 0
 #define LED_STATE_ANTISPARK 1
@@ -43,7 +40,10 @@ static const bool led_patterns[][8] = {
 uint8_t led_state_index = LED_STATE_UNSAFE_INIT;
 uint8_t led_pattern_index = 0;
 uint64_t lastLedSwitch = 0;
+uint64_t last_heartbeat_switch;
+bool last_heartbeat_state = false;
 bool deadman_error = false;
+uint64_t motorOnTime = 0;
 
 enum class CtrlState {
     NotSafeInit,
@@ -66,7 +66,6 @@ void setup() {
     pinMode(PIN_IN_BUTTON, INPUT);
 
     // NOT USED
-    digitalWrite(PIN_OUT_3, LOW);
     digitalWrite(PIN_OUT_LED, LOW);
 
     pinMode(PIN_OUT_RESISTOR, OUTPUT);
@@ -76,8 +75,6 @@ void setup() {
 
     delay(1000);
 }
-
-uint64_t motorOnTime = 0;
 
 void loop() {
     // read inputs
@@ -157,5 +154,12 @@ void loop() {
         led_pattern_index = (led_pattern_index + 1) % 8;
         digitalWrite(PIN_OUT_STATUSLED, led_patterns[led_state_index][led_pattern_index] == 1 ? HIGH : LOW);
         lastLedSwitch = time;
+    }
+
+    // heartbeat
+    if (last_heartbeat_switch + HEARTBEAT_TIME_MS < time) {
+        digitalWrite(PIN_OUT_LED, last_heartbeat_state ? HIGH : LOW);
+        last_heartbeat_switch = time;
+        last_heartbeat_state = !last_heartbeat_state;
     }
 }
