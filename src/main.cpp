@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include "tinycontroller.h"
-#include "blinky.h"
 
 /**
  * Safety controller for BatterBox switching
@@ -21,16 +20,30 @@
 #define PIN_OUT_STATUSLED PIN_OUT_2
 
 #define ANTISPARK_TIME_DELAY_MS 5000
-#define STATUSLED_BLINK_PERIOD 750
-#define STATUSLED_NOTSAFE_BLINK_PERIOD 350
 
+#define HEARTBEAT_TIME_MS 500
+#define LED_BLINK_TIME 250
+#define LED_STATE_UNSAFE_INIT 0
+#define LED_STATE_ANTISPARK 1
+#define LED_STATE_MOTOR_ON 2
+#define LED_STATE_MOTOR_OFF 3
+#define LED_STATE_DEADMAN 4
 
-#define LED_BLINK_OK 500
-#define LED_BLINK_NOTSAFE 250
+static const bool led_patterns[][8] = {
+        {0, 1, 0, 1, 0, 1, 0, 1},         // UNSAFE_INIT
+        {0, 0, 1, 1, 0, 0, 1, 1},         // Antispark wait
+        {1, 1, 1, 1, 1, 1, 1, 1},         // Motor on
+        {0, 0, 0, 0, 0, 0, 0, 0},         // Motor off
+        {1, 0, 1, 1, 0, 0, 1, 0},         // Deadmanswitch off
+};
 
-uint64_t lls = 0;
-
+uint8_t led_state_index = LED_STATE_UNSAFE_INIT;
+uint8_t led_pattern_index = 0;
 uint64_t lastLedSwitch = 0;
+uint64_t last_heartbeat_switch;
+bool last_heartbeat_state = false;
+bool deadman_error = false;
+uint64_t motorOnTime = 0;
 
 enum class CtrlState {
     NotSafeInit,
@@ -53,7 +66,6 @@ void setup() {
     pinMode(PIN_IN_BUTTON, INPUT);
 
     // NOT USED
-    digitalWrite(PIN_OUT_3, LOW);
     digitalWrite(PIN_OUT_LED, LOW);
 
     pinMode(PIN_OUT_RESISTOR, OUTPUT);
@@ -64,8 +76,6 @@ void setup() {
     delay(1000);
 }
 
-uint64_t motorOnTime = 0;
-
 void loop() {
     // read inputs
     int8_t motorSwitch = digitalRead(PIN_IN_MOTOR);
@@ -75,70 +85,81 @@ void loop() {
     // update state machine
     switch (ctrlState) {
         case CtrlState::NotSafeInit:
-            if(motorSwitch == LOW && deadmanSwitch == LOW)
+            if (motorSwitch == LOW && deadmanSwitch == LOW)
                 ctrlState = CtrlState::MotorOff;
             break;
         case CtrlState::MotorOff:
-            if(motorSwitch == HIGH) {
+            if (motorSwitch == HIGH) {
                 ctrlState = CtrlState::AntisparkOn;
                 motorOnTime = millis();
             }
             break;
         case CtrlState::AntisparkOn:
-            if(motorSwitch == LOW) {
+            if (motorSwitch == LOW) {
                 ctrlState = CtrlState::MotorOff;
-            } else if(millis() - motorOnTime > ANTISPARK_TIME_DELAY_MS) {
+            } else if (millis() - motorOnTime > ANTISPARK_TIME_DELAY_MS) {
                 ctrlState = CtrlState::MotorOn;
             }
             break;
         case CtrlState::MotorOn:
-            if(motorSwitch == LOW) {
+            if (motorSwitch == LOW) {
                 ctrlState = CtrlState::MotorOff;
             }
             break;
     }
-    if(deadmanSwitch == HIGH) {
+    if (deadmanSwitch == HIGH) {
         ctrlState = CtrlState::NotSafeInit;
+        deadman_error = true;
+    } else {
+        deadman_error = false;
     }
 
     // ------------------------------------------------------------------------
-    if(ctrlState == CtrlState::MotorOff || ctrlState == CtrlState::NotSafeInit) {
+    if (ctrlState == CtrlState::MotorOff || ctrlState == CtrlState::NotSafeInit) {
         digitalWrite(PIN_OUT_RESISTOR, LOW);
         digitalWrite(PIN_OUT_CONTACTOR, LOW);
-        digitalWrite(PIN_OUT_STATUSLED, LOW);
-
-        if(ctrlState == CtrlState::NotSafeInit) {
-            if(lastLedSwitch + STATUSLED_NOTSAFE_BLINK_PERIOD < millis()) {
-                digitalWrite(PIN_OUT_STATUSLED, CHANGE);
-                lastLedSwitch = millis();
-            }
-        }else {
-            digitalWrite(PIN_OUT_STATUSLED, LOW);
-        }
-    }else if(ctrlState == CtrlState::MotorOn) {
+    } else if (ctrlState == CtrlState::MotorOn) {
         digitalWrite(PIN_OUT_RESISTOR, HIGH);
         digitalWrite(PIN_OUT_CONTACTOR, HIGH);
-        digitalWrite(PIN_OUT_STATUSLED, HIGH);
-    }else if(ctrlState == CtrlState::AntisparkOn) {
+    } else if (ctrlState == CtrlState::AntisparkOn) {
         digitalWrite(PIN_OUT_RESISTOR, HIGH);
         digitalWrite(PIN_OUT_CONTACTOR, LOW);
+    }
 
-        if(lastLedSwitch + STATUSLED_BLINK_PERIOD < millis()) {
-            digitalWrite(PIN_OUT_STATUSLED, CHANGE);
-            lastLedSwitch = millis();
+    switch (ctrlState) {
+        case CtrlState::NotSafeInit: {
+            if (deadman_error) {
+                led_state_index = LED_STATE_DEADMAN;
+            } else {
+                led_state_index = LED_STATE_UNSAFE_INIT;
+            }
         }
+            break;
+        case CtrlState::MotorOff: {
+            led_state_index = LED_STATE_MOTOR_OFF;
+        }
+            break;
+        case CtrlState::AntisparkOn: {
+            led_state_index = LED_STATE_ANTISPARK;
+        }
+            break;
+        case CtrlState::MotorOn: {
+            led_state_index = LED_STATE_MOTOR_ON;
+        }
+            break;
     }
 
     uint64_t time = millis();
-    if(ctrlState == CtrlState::NotSafeInit) {
-        if(lls + LED_BLINK_NOTSAFE < time){
-            lls = time;
-            digitalWrite(PIN_OUT_LED, CHANGE);
-        }
-    }else {
-        if(lls + LED_BLINK_OK < time) {
-            lls = time;
-            digitalWrite(PIN_OUT_LED, CHANGE);
-        }
+    if (lastLedSwitch + LED_BLINK_TIME < time) {
+        led_pattern_index = (led_pattern_index + 1) % 8;
+        digitalWrite(PIN_OUT_STATUSLED, led_patterns[led_state_index][led_pattern_index] == 1 ? HIGH : LOW);
+        lastLedSwitch = time;
+    }
+
+    // heartbeat
+    if (last_heartbeat_switch + HEARTBEAT_TIME_MS < time) {
+        digitalWrite(PIN_OUT_LED, last_heartbeat_state ? HIGH : LOW);
+        last_heartbeat_switch = time;
+        last_heartbeat_state = !last_heartbeat_state;
     }
 }
