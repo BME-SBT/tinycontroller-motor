@@ -7,6 +7,7 @@
  *
  * Wiring:
  * Input0: MotorSwitch (0 off, VBAT on)
+ * Input1: Deadman switch (0 deadman OK, VBAT (prob PULLUP) deadman ACTIVE)
  *
  * Output0: Motor with antispark resistor+
  * Output1: Antispark off contactor+
@@ -44,6 +45,11 @@ CtrlState ctrlState = CtrlState::NotSafeInit;
 
 
 void setup() {
+    pinMode(PIN_OUT_RESISTOR, OUTPUT);
+    pinMode(PIN_OUT_CONTACTOR, OUTPUT);
+    pinMode(PIN_OUT_STATUSLED, OUTPUT);
+    pinMode(PIN_OUT_LED, OUTPUT);
+    
     digitalWrite(PIN_OUT_RESISTOR, LOW);
     digitalWrite(PIN_OUT_CONTACTOR, LOW);
     digitalWrite(PIN_OUT_STATUSLED, LOW);
@@ -55,11 +61,6 @@ void setup() {
     // NOT USED
     digitalWrite(PIN_OUT_3, LOW);
     digitalWrite(PIN_OUT_LED, LOW);
-
-    pinMode(PIN_OUT_RESISTOR, OUTPUT);
-    pinMode(PIN_OUT_CONTACTOR, OUTPUT);
-    pinMode(PIN_OUT_STATUSLED, OUTPUT);
-    pinMode(PIN_OUT_LED, OUTPUT);
 
     delay(1000);
 }
